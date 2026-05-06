@@ -1,0 +1,14 @@
+{
+ "color": "#1B7FD9",
+ "doctype": "Number Card",
+ "document_type": "Material Request",
+ "filters_json": "[[\"Material Request\",\"helix_generated\",\"=\",1],[\"Material Request\",\"status\",\"in\",[\"Draft\",\"Pending\",\"To Receive\",\"Partially Received\"]]]",
+ "function": "Count",
+ "is_public": 1,
+ "is_standard": 1,
+ "label": "Open Material Requests",
+ "module": "Helix Core",
+ "name": "Helix Open Material Requests",
+ "show_percentage_stats": 0,
+ "type": "Document Type"
+}

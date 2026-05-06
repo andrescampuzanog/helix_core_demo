@@ -1,0 +1,17 @@
+{
+ "chart_name": "Helix - Forecast vs Actuals",
+ "chart_type": "Custom",
+ "color": "#0B5394",
+ "doctype": "Dashboard Chart",
+ "is_public": 1,
+ "is_standard": 1,
+ "module": "Helix Core",
+ "name": "Helix - Forecast vs Actuals",
+ "number_of_groups": 0,
+ "source": "Forecast vs Actuals",
+ "time_interval": "Daily",
+ "timeseries": 1,
+ "timespan": "Last Year",
+ "type": "Line",
+ "document_type": "Demand Forecast"
+}

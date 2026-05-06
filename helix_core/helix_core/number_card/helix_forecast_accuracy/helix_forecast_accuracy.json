@@ -1,0 +1,14 @@
+{
+ "color": "#0B5394",
+ "doctype": "Number Card",
+ "document_type": "Demand Forecast",
+ "function": "Count",
+ "is_public": 1,
+ "is_standard": 1,
+ "label": "Forecast Accuracy (30d)",
+ "method": "helix_core.helix_core.api.metrics.forecast_accuracy_30d",
+ "module": "Helix Core",
+ "name": "Helix Forecast Accuracy",
+ "show_percentage_stats": 0,
+ "type": "Custom"
+}

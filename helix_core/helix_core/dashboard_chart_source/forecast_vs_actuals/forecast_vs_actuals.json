@@ -1,0 +1,7 @@
+{
+ "doctype": "Dashboard Chart Source",
+ "module": "Helix Core",
+ "name": "Forecast vs Actuals",
+ "source_name": "Forecast vs Actuals",
+ "timeseries": 1
+}

@@ -1,0 +1,112 @@
+{
+ "charts": [
+  {
+   "chart_name": "Helix - Forecast vs Actuals",
+   "label": "Helix - Forecast vs Actuals"
+  }
+ ],
+ "content": "[{\"id\":\"hxhdr1\",\"type\":\"header\",\"data\":{\"text\":\"<span class='h4'><b>S&amp;OP at a Glance</b></span>\",\"col\":12}},{\"id\":\"hxnc1\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Helix Forecast Accuracy\",\"col\":3}},{\"id\":\"hxnc2\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Helix Items at Stockout Risk\",\"col\":3}},{\"id\":\"hxnc3\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Helix Open Material Requests\",\"col\":3}},{\"id\":\"hxnc4\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Helix Active Forecast Run\",\"col\":3}},{\"id\":\"hxsp1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"hxhdr2\",\"type\":\"header\",\"data\":{\"text\":\"<span class='h4'><b>Forecast vs Actuals \u2014 last 14 days</b></span>\",\"col\":12}},{\"id\":\"hxch1\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Helix - Forecast vs Actuals\",\"col\":12}},{\"id\":\"hxsp2\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"hxhdr3\",\"type\":\"header\",\"data\":{\"text\":\"<span class='h4'><b>Replenishment &amp; Reports</b></span>\",\"col\":12}},{\"id\":\"hxsc1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Material Requests\",\"col\":4}},{\"id\":\"hxsc2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"At-Risk Items\",\"col\":4}},{\"id\":\"hxcd1\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}}]",
+ "creation": "2026-05-01 12:00:00",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "stock",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "Helix SOP",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Forecast Detail",
+   "link_count": 0,
+   "link_to": "Forecast Detail",
+   "link_type": "Report",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "All Demand Forecasts",
+   "link_count": 0,
+   "link_to": "Demand Forecast",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "POS Daily Sales",
+   "link_count": 0,
+   "link_to": "POS Daily Sales",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-05-02 00:44:17.363604",
+ "modified_by": "Administrator",
+ "module": "Helix Core",
+ "name": "Helix SOP",
+ "number_cards": [
+  {
+   "label": "Helix Forecast Accuracy",
+   "number_card_name": "Helix Forecast Accuracy"
+  },
+  {
+   "label": "Helix Items at Stockout Risk",
+   "number_card_name": "Helix Items at Stockout Risk"
+  },
+  {
+   "label": "Helix Open Material Requests",
+   "number_card_name": "Helix Open Material Requests"
+  },
+  {
+   "label": "Helix Active Forecast Run",
+   "number_card_name": "Helix Active Forecast Run"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [],
+ "sequence_id": 1.0,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "format": "{} Pending",
+   "label": "Material Requests",
+   "link_to": "Material Request",
+   "stats_filter": "{\"helix_generated\":1,\"status\":[\"in\",[\"Draft\",\"Pending\",\"To Receive\",\"Partially Received\"]]}",
+   "type": "DocType"
+  },
+  {
+   "color": "Red",
+   "doc_view": "List",
+   "format": "{} Items",
+   "label": "At-Risk Items",
+   "link_to": "Item",
+   "stats_filter": "{\"helix_at_risk\":1}",
+   "type": "DocType"
+  }
+ ],
+ "title": "Helix SOP"
+}

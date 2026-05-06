@@ -1,0 +1,14 @@
+{
+ "color": "#D9534F",
+ "doctype": "Number Card",
+ "document_type": "Item",
+ "filters_json": "[[\"Item\",\"helix_at_risk\",\"=\",1]]",
+ "function": "Count",
+ "is_public": 1,
+ "is_standard": 1,
+ "label": "Items at Stockout Risk",
+ "module": "Helix Core",
+ "name": "Helix Items at Stockout Risk",
+ "show_percentage_stats": 0,
+ "type": "Document Type"
+}

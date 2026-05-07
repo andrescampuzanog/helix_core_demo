@@ -27,3 +27,7 @@ fixtures = [
 after_install = [
     "helix_core.helix_core.seed.seed_demo.run"
 ]
+
+after_migrate = [
+    "helix_core.helix_core.seed.seed_demo.run"
+]

@@ -8,18 +8,22 @@ app_license = "mit"
 required_apps = ["erpnext"]
 
 fixtures = [
-	{
-		"doctype": "Custom Field",
-		"filters": [
-			[
-				"name",
-				"in",
-				[
-					"Material Request-helix_generated",
-					"Purchase Receipt-helix_generated",
-					"Item-helix_at_risk",
-				],
-			]
-		],
-	}
+    {
+        "doctype": "Custom Field",
+        "filters": [
+            [
+                "name",
+                "in",
+                [
+                    "Material Request-helix_generated",
+                    "Purchase Receipt-helix_generated",
+                    "Item-helix_at_risk",
+                ],
+            ]
+        ],
+    }
+]
+
+after_install = [
+    "helix_core.helix_core.seed.seed_demo.run"
 ]

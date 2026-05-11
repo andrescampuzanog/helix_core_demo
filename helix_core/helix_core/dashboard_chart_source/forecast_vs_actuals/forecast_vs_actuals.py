@@ -237,14 +237,21 @@ def get(
 		(index for index, period in enumerate(periods) if buckets[period]["actual"]),
 		default=-1,
 	)
+	actual_start_index = min(
+		(index for index, period in enumerate(periods) if buckets[period]["actual"]),
+		default=-1,
+	)
 	forecast_values = [round(buckets[period]["forecast"], 2) for period in periods]
 	actual_values = [
-		round(buckets[period]["actual"], 2) if index <= actual_end_index else 0.0
+		round(buckets[period]["actual"], 2)
+		if actual_start_index <= index <= actual_end_index
+		else 0.0
 		for index, period in enumerate(periods)
 	]
 
 	return {
 		"labels": labels,
+		"actual_start_index": actual_start_index,
 		"actual_end_index": actual_end_index,
 		"datasets": [
 			{"name": "Forecast", "values": forecast_values, "chartType": "line"},

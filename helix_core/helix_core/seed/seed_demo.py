@@ -39,6 +39,7 @@ from helix_core.helix_core.seed.data.items import (
 # ---------------------------------------------------------------------------
 
 RNG_SEED = 20260501
+DEMO_SEED_VERSION = "2026-05-11-one-year-history-v1"
 HISTORICAL_DAYS = 365
 FORECAST_HORIZON = 14
 HISTORICAL_RUNS = 365  # plus 1 active, so every historical sales day has a forecast run
@@ -153,6 +154,9 @@ def run():
 	_ensure_setup_complete()
 	frappe.db.commit()
 
+	_mark_demo_seed_current()
+	frappe.db.commit()
+
 	_print_summary(t0)
 
 
@@ -172,7 +176,7 @@ def after_migrate():
 	ensure_demo_site_state()
 	frappe.db.commit()
 
-	ensure_forecasts_for_existing_sales()
+	ensure_demo_data_current()
 	frappe.db.commit()
 
 	print(f"[helix-seed] migration setup done ({time.time() - t0:.1f}s)")
@@ -186,7 +190,44 @@ def refresh_demo_site_state(reseed: int = 0):
 	ensure_demo_site_state()
 	frappe.db.commit()
 	if int(reseed):
+		ensure_demo_data_current(force=1, background=0)
+
+
+def ensure_demo_data_current(force: int = 0, background: int = 1):
+	"""Refresh demo data once when the deployed site still has an older seed."""
+	if not int(force) and not _demo_data_needs_refresh():
+		ensure_forecasts_for_existing_sales()
+		return
+
+	if int(background):
+		if frappe.db.get_default("helix_demo_seed_refresh_pending") == DEMO_SEED_VERSION:
+			print("[helix-seed] demo data refresh already queued")
+			return
+
+		frappe.db.set_default("helix_demo_seed_refresh_pending", DEMO_SEED_VERSION)
+		frappe.enqueue(
+			"helix_core.helix_core.seed.seed_demo.rebuild_demo_data_job",
+			queue="long",
+			job_name="helix_demo_data_rebuild",
+			timeout=3600,
+			enqueue_after_commit=True,
+		)
+		print("[helix-seed] stale demo data detected; queued long demo data rebuild")
+		return
+
+	rebuild_demo_data_job()
+
+
+def rebuild_demo_data_job():
+	"""Background-safe rebuild used when cloud data predates the current demo seed."""
+	try:
+		print("[helix-seed] rebuilding demo data…")
 		run()
+		ensure_demo_site_state()
+		_mark_demo_seed_current()
+	finally:
+		frappe.db.set_default("helix_demo_seed_refresh_pending", "")
+		frappe.db.commit()
 
 
 def ensure_custom_fields():
@@ -226,6 +267,34 @@ def ensure_demo_site_state():
 	ensure_number_card_definitions()
 	reset_saved_chart_settings()
 	frappe.clear_cache()
+
+
+def _demo_data_needs_refresh() -> bool:
+	if frappe.db.get_default("helix_demo_seed_version") != DEMO_SEED_VERSION:
+		return True
+
+	pos_count = frappe.db.count("POS Daily Sales")
+	if not pos_count:
+		return True
+
+	min_date, max_date = frappe.db.sql(
+		"""SELECT MIN(`date`), MAX(`date`) FROM `tabPOS Daily Sales`"""
+	)[0]
+	if not min_date or not max_date:
+		return True
+
+	expected_start = getdate(add_days(today(), -HISTORICAL_DAYS))
+	expected_end = getdate(add_days(today(), -1))
+	if getdate(min_date) > expected_start or getdate(max_date) < expected_end:
+		return True
+
+	active_run_count = frappe.db.count("Forecast Run", {"status": "Active"})
+	forecast_count = frappe.db.count("Demand Forecast")
+	return not active_run_count or not forecast_count
+
+
+def _mark_demo_seed_current():
+	frappe.db.set_default("helix_demo_seed_version", DEMO_SEED_VERSION)
 
 
 def _ensure_setup_complete():

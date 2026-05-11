@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import random
 import time
+import json
 from datetime import date, timedelta
 
 import frappe
@@ -162,6 +163,9 @@ def after_migrate():
 	print(f"[helix-seed] custom fields and indexes ready ({time.time() - t0:.1f}s)")
 
 	_ensure_setup_complete()
+	frappe.db.commit()
+
+	ensure_workspace_header_text()
 	frappe.db.commit()
 
 	ensure_forecasts_for_existing_sales()
@@ -990,6 +994,39 @@ def ensure_demo_users_and_landing_page():
 				frappe.db.set_value(
 					"User", u, "home_settings", f'{{"workspace_visited":["{ws_name}"]}}'
 				)
+
+
+def ensure_workspace_header_text():
+	"""Remove stale hardcoded time-window text from the Helix S&OP chart header."""
+	ws_name = "Helix SOP" if frappe.db.exists("Workspace", "Helix SOP") else "Helix S&OP"
+	if not frappe.db.exists("Workspace", ws_name):
+		return
+
+	workspace = frappe.get_doc("Workspace", ws_name)
+	if not workspace.content:
+		return
+
+	try:
+		blocks = json.loads(workspace.content)
+	except Exception:
+		return
+
+	changed = False
+	stale_titles = {
+		"<span class='h4'><b>Forecast vs Actuals — last 14 days</b></span>",
+		"<span class='h4'><b>Forecast vs Actuals - last 14 days</b></span>",
+		"<span class='h4'><b>Forecast vs Actuals -- last 14 days</b></span>",
+	}
+	clean_title = "<span class='h4'><b>Forecast vs Actuals</b></span>"
+	for block in blocks:
+		data = block.get("data") or {}
+		if block.get("type") == "header" and data.get("text") in stale_titles:
+			data["text"] = clean_title
+			changed = True
+
+	if changed:
+		workspace.content = json.dumps(blocks, separators=(",", ":"))
+		workspace.save(ignore_permissions=True)
 
 
 # ---------------------------------------------------------------------------

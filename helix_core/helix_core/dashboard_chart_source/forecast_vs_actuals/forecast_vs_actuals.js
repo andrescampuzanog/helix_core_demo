@@ -2,6 +2,85 @@ frappe.provide("frappe.dashboards.chart_sources");
 frappe.provide("frappe.widget");
 
 (() => {
+	const SOURCE_NAME = "Forecast vs Actuals";
+	const DEFAULT_FORECAST_HORIZON_DAYS = 14;
+	const FORECAST_HORIZON_OPTIONS = {
+		"Next 2 Weeks": 14,
+		"Next 4 Weeks": 28,
+	};
+
+	const get_forecast_horizon_days = (widget) => {
+		const value =
+			widget.selected_forecast_horizon_days ||
+			widget.chart_settings?.forecast_horizon_days ||
+			DEFAULT_FORECAST_HORIZON_DAYS;
+		const days = Number(value);
+		return Object.values(FORECAST_HORIZON_OPTIONS).includes(days)
+			? days
+			: DEFAULT_FORECAST_HORIZON_DAYS;
+	};
+
+	const get_forecast_horizon_label = (days) =>
+		Object.keys(FORECAST_HORIZON_OPTIONS).find((label) => FORECAST_HORIZON_OPTIONS[label] === days) ||
+		"Next 2 Weeks";
+
+	const is_forecast_vs_actuals_widget = (widget) => widget.chart_doc?.source === SOURCE_NAME;
+
+	const install_forecast_horizon_filter = () => {
+		const ChartWidget = frappe.widget.widget_factory?.chart;
+		if (
+			!ChartWidget ||
+			frappe.widget.__helix_forecast_horizon_filter_installed
+		) {
+			return;
+		}
+
+		const original_get_time_series_filters = ChartWidget.prototype.get_time_series_filters;
+		ChartWidget.prototype.get_time_series_filters = function (...args) {
+			const filters = original_get_time_series_filters.apply(this, args);
+			if (!is_forecast_vs_actuals_widget(this) || this.chart_doc.type === "Heatmap") {
+				return filters;
+			}
+
+			const selected_days = get_forecast_horizon_days(this);
+			filters.splice(1, 0, {
+				label: __(get_forecast_horizon_label(selected_days)),
+				options: Object.keys(FORECAST_HORIZON_OPTIONS),
+				class: "forecast-horizon-filter",
+				action: (selected_item) => {
+					this.selected_forecast_horizon_days = FORECAST_HORIZON_OPTIONS[selected_item];
+					this.save_chart_config_for_user({
+						forecast_horizon_days: this.selected_forecast_horizon_days,
+					});
+					this.fetch_and_update_chart();
+				},
+			});
+
+			return filters;
+		};
+
+		const original_fetch = ChartWidget.prototype.fetch;
+		ChartWidget.prototype.fetch = function (filters, refresh = false, args) {
+			if (!is_forecast_vs_actuals_widget(this)) {
+				return original_fetch.apply(this, arguments);
+			}
+
+			return frappe.xcall(this.settings.method, {
+				chart_name: this.chart_doc.name,
+				filters,
+				refresh: refresh ? 1 : 0,
+				time_interval: args?.time_interval || null,
+				timespan: args?.timespan || null,
+				from_date: args?.from_date || null,
+				to_date: args?.to_date || null,
+				heatmap_year: args?.heatmap_year || null,
+				forecast_horizon_days: get_forecast_horizon_days(this),
+			});
+		};
+
+		frappe.widget.__helix_forecast_horizon_filter_installed = true;
+	};
+
 	const install_actual_tail_trim = () => {
 		if (frappe.__helix_forecast_tail_trim_installed || !frappe.utils?.make_chart) return;
 
@@ -69,6 +148,7 @@ frappe.provide("frappe.widget");
 		});
 	};
 
+	install_forecast_horizon_filter();
 	install_actual_tail_trim();
 })();
 

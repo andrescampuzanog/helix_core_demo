@@ -20,7 +20,8 @@ from frappe.utils.dateutils import (
 )
 
 DEMO_FALLBACK_ACCURACY = 95.5
-FORECAST_HORIZON_DAYS = 14
+DEFAULT_FORECAST_HORIZON_DAYS = 14
+FORECAST_HORIZON_OPTIONS = {14, 28}
 
 
 def _stable_int(*parts) -> int:
@@ -63,7 +64,14 @@ def _future_reference_period(period, timegrain):
 def _shape_synced_future_forecast(period, timegrain, buckets, current_forecast: float) -> float:
 	"""Keep future-only chart buckets visually aligned with recent actual demand shape."""
 	reference_period = _future_reference_period(period, timegrain)
-	reference_actual = buckets.get(reference_period, {}).get("actual", 0.0) if reference_period else 0.0
+	reference_actual = 0.0
+	for _attempt in range(8):
+		if not reference_period:
+			break
+		reference_actual = buckets.get(reference_period, {}).get("actual", 0.0)
+		if reference_actual:
+			break
+		reference_period = _future_reference_period(reference_period, timegrain)
 	if not reference_actual:
 		return current_forecast
 
@@ -78,7 +86,19 @@ def _shape_synced_future_forecast(period, timegrain, buckets, current_forecast: 
 
 
 @frappe.whitelist()
-def get(chart_name=None, chart=None, no_cache=None, filters=None, from_date=None, to_date=None, timespan=None, time_interval=None, heatmap_year=None, **kwargs):
+def get(
+	chart_name=None,
+	chart=None,
+	no_cache=None,
+	filters=None,
+	from_date=None,
+	to_date=None,
+	timespan=None,
+	time_interval=None,
+	heatmap_year=None,
+	forecast_horizon_days=None,
+	**kwargs,
+):
 	chart_doc = None
 	if chart_name:
 		chart_doc = frappe.get_doc("Dashboard Chart", chart_name)
@@ -106,8 +126,15 @@ def get(chart_name=None, chart=None, no_cache=None, filters=None, from_date=None
 					item_group = f[3]
 					break
 
+	try:
+		forecast_horizon_days = int(forecast_horizon_days or DEFAULT_FORECAST_HORIZON_DAYS)
+	except (TypeError, ValueError):
+		forecast_horizon_days = DEFAULT_FORECAST_HORIZON_DAYS
+	if forecast_horizon_days not in FORECAST_HORIZON_OPTIONS:
+		forecast_horizon_days = DEFAULT_FORECAST_HORIZON_DAYS
+
 	actual_end = getdate(to_date) if to_date else getdate(add_days(nowdate(), -1))
-	forecast_end = getdate(add_days(nowdate(), FORECAST_HORIZON_DAYS - 1))
+	forecast_end = getdate(add_days(nowdate(), forecast_horizon_days - 1))
 	if timespan == "Select Date Range" and from_date:
 		start = getdate(from_date)
 	else:

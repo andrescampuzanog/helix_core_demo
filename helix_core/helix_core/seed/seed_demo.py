@@ -12,10 +12,12 @@ import math
 import random
 import time
 import json
+import os
 from datetime import date, timedelta
 
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+from frappe.modules import get_module_path
 from frappe.utils import add_days, getdate, now, today
 
 from helix_core.helix_core.seed.data.items import (
@@ -44,7 +46,9 @@ MODEL_VERSION = "helix-grocery-v1.2"
 ADMIN_USER = "admin@helix.mx"
 DEMO_USER = "demo@helix.mx"
 DEMO_PASSWORD = "Helix2026!"
-
+WORKSPACE_NAME = "Helix SOP"
+LEGACY_WORKSPACE_NAME = "Helix S&OP"
+FORECAST_CHART_NAME = "Helix - Forecast vs Actuals"
 # Promo windows expressed as (days_back_start, days_back_end) inclusive — dates earlier in time first.
 # At least one window must fall within the chart's last-14-day range so the
 # "the model saw the spike" moment lands in the demo's centerpiece chart.
@@ -165,13 +169,24 @@ def after_migrate():
 	_ensure_setup_complete()
 	frappe.db.commit()
 
-	ensure_workspace_header_text()
+	ensure_demo_site_state()
 	frappe.db.commit()
 
 	ensure_forecasts_for_existing_sales()
 	frappe.db.commit()
 
 	print(f"[helix-seed] migration setup done ({time.time() - t0:.1f}s)")
+
+
+def refresh_demo_site_state(reseed: int = 0):
+	"""Manual entrypoint for cloud/demo deploys.
+
+	Run repairs every time; optionally do a full demo reseed when `reseed=1`.
+	"""
+	ensure_demo_site_state()
+	frappe.db.commit()
+	if int(reseed):
+		run()
 
 
 def ensure_custom_fields():
@@ -201,6 +216,16 @@ def ensure_forecasts_for_existing_sales():
 	print("[helix-seed] POS history found without usable forecasts; generating forecasts…")
 	baseline = _build_baseline_lattice()
 	seed_forecast_runs_and_forecasts(baseline, skip_existing_forecast_rows=True)
+
+
+def ensure_demo_site_state():
+	"""Bring live demo-facing docs and saved chart settings in sync with app code."""
+	ensure_workspace_header_text()
+	ensure_workspace_definition()
+	ensure_forecast_chart_definition()
+	ensure_number_card_definitions()
+	reset_saved_chart_settings()
+	frappe.clear_cache()
 
 
 def _ensure_setup_complete():
@@ -986,7 +1011,7 @@ def ensure_demo_users_and_landing_page():
 	# Set Helix SOP as default workspace for the demo user.
 	# Workspace name has no '&' so the URL slug becomes /app/helix-sop;
 	# Frappe routes URLs with %26 through the website bundle, which has no desk navbar.
-	ws_name = "Helix SOP" if frappe.db.exists("Workspace", "Helix SOP") else "Helix S&OP"
+	ws_name = WORKSPACE_NAME if frappe.db.exists("Workspace", WORKSPACE_NAME) else LEGACY_WORKSPACE_NAME
 	if frappe.db.exists("Workspace", ws_name):
 		for u in (DEMO_USER, ADMIN_USER, "Administrator"):
 			if frappe.db.exists("User", u):
@@ -998,7 +1023,7 @@ def ensure_demo_users_and_landing_page():
 
 def ensure_workspace_header_text():
 	"""Remove stale hardcoded time-window text from the Helix S&OP chart header."""
-	ws_name = "Helix SOP" if frappe.db.exists("Workspace", "Helix SOP") else "Helix S&OP"
+	ws_name = WORKSPACE_NAME if frappe.db.exists("Workspace", WORKSPACE_NAME) else LEGACY_WORKSPACE_NAME
 	if not frappe.db.exists("Workspace", ws_name):
 		return
 
@@ -1027,6 +1052,119 @@ def ensure_workspace_header_text():
 	if changed:
 		workspace.content = json.dumps(blocks, separators=(",", ":"))
 		workspace.save(ignore_permissions=True)
+
+
+def ensure_workspace_definition():
+	"""Update the live workspace doc from the shipped fixture."""
+	ws_name = WORKSPACE_NAME if frappe.db.exists("Workspace", WORKSPACE_NAME) else LEGACY_WORKSPACE_NAME
+	if not frappe.db.exists("Workspace", ws_name):
+		return
+
+	fixture = _load_json_fixture("workspace", "helix_sop", "helix_sop.json")
+	for fieldname in ("title", "label", "icon", "module", "public", "content"):
+		if fieldname in fixture:
+			frappe.db.set_value("Workspace", ws_name, fieldname, fixture[fieldname], update_modified=False)
+
+
+def ensure_forecast_chart_definition():
+	"""Update the live dashboard chart doc from the shipped fixture."""
+	if not frappe.db.exists("Dashboard Chart", FORECAST_CHART_NAME):
+		return
+
+	fixture = _load_json_fixture(
+		"dashboard_chart",
+		"helix_forecast_vs_actuals",
+		"helix_forecast_vs_actuals.json",
+	)
+	for fieldname in (
+		"chart_name",
+		"chart_type",
+		"color",
+		"document_type",
+		"is_public",
+		"is_standard",
+		"module",
+		"number_of_groups",
+		"source",
+		"time_interval",
+		"timeseries",
+		"timespan",
+		"type",
+	):
+		if fieldname in fixture:
+			frappe.db.set_value(
+				"Dashboard Chart",
+				FORECAST_CHART_NAME,
+				fieldname,
+				fixture[fieldname],
+				update_modified=False,
+			)
+
+
+def ensure_number_card_definitions():
+	"""Update live number-card docs from their shipped fixtures."""
+	number_card_fixtures = {
+		"Helix Forecast Accuracy": ("helix_forecast_accuracy", "helix_forecast_accuracy.json"),
+		"Helix Items at Stockout Risk": ("helix_items_at_stockout_risk", "helix_items_at_stockout_risk.json"),
+		"Helix Open Material Requests": ("helix_open_material_requests", "helix_open_material_requests.json"),
+		"Helix Active Forecast Run": ("helix_active_forecast_run", "helix_active_forecast_run.json"),
+	}
+	for card_name, (folder, filename) in number_card_fixtures.items():
+		if not frappe.db.exists("Number Card", card_name):
+			continue
+
+		fixture = _load_json_fixture("number_card", folder, filename)
+		for fieldname in (
+			"color",
+			"document_type",
+			"filters_json",
+			"function",
+			"is_public",
+			"is_standard",
+			"label",
+			"method",
+			"module",
+			"show_percentage_stats",
+			"type",
+		):
+			if fieldname in fixture:
+				frappe.db.set_value(
+					"Number Card",
+					card_name,
+					fieldname,
+					fixture[fieldname],
+					update_modified=False,
+				)
+
+
+def reset_saved_chart_settings():
+	"""Remove per-user saved settings that keep the old chart state alive after deploy."""
+	for row in frappe.get_all("Dashboard Settings", fields=["name", "chart_config"]):
+		if not row.chart_config:
+			continue
+
+		try:
+			chart_config = frappe.parse_json(row.chart_config) or {}
+		except Exception:
+			continue
+
+		if FORECAST_CHART_NAME not in chart_config:
+			continue
+
+		del chart_config[FORECAST_CHART_NAME]
+		frappe.db.set_value(
+			"Dashboard Settings",
+			row.name,
+			"chart_config",
+			json.dumps(chart_config, separators=(",", ":")),
+			update_modified=False,
+		)
+
+
+def _load_json_fixture(*parts):
+	path = os.path.join(get_module_path("helix_core"), *parts)
+	with open(path) as fixture_file:
+		return json.load(fixture_file)
 
 
 # ---------------------------------------------------------------------------

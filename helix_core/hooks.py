@@ -29,5 +29,5 @@ after_install = [
 ]
 
 after_migrate = [
-    "helix_core.helix_core.seed.seed_demo.run"
+    "helix_core.helix_core.seed.seed_demo.after_migrate"
 ]

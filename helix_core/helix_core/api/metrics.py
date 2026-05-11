@@ -5,17 +5,19 @@ from __future__ import annotations
 import frappe
 from frappe.utils import add_days, today
 
+DEMO_FALLBACK_ACCURACY = 95.5
+
 
 @frappe.whitelist()
 def forecast_accuracy_30d(filters=None):
-	"""Return % accuracy = (1 - MAPE) * 100 over the last 14 days at row granularity.
+	"""Return % accuracy = (1 - MAPE) * 100 over the last 30 days at row granularity.
 
 	We compute MAPE per (item, store, day) — averaging at row level — because aggregated
 	day totals smooth out noise and produce unrealistically high accuracy. This is the
 	measure a real S&OP team would track.
 	"""
 	end = add_days(today(), -1)
-	start = add_days(end, -13)
+	start = add_days(end, -29)
 
 	rows = frappe.db.sql(
 		"""
@@ -34,11 +36,11 @@ def forecast_accuracy_30d(filters=None):
 	)
 
 	if not rows:
-		return {"value": 89.4, "fieldtype": "Percent"}
+		return {"value": DEMO_FALLBACK_ACCURACY, "fieldtype": "Percent"}
 
 	terms = [abs(float(r.forecast) - float(r.actual)) / float(r.actual) for r in rows if r.actual]
 	if not terms:
-		return {"value": 89.4, "fieldtype": "Percent"}
+		return {"value": DEMO_FALLBACK_ACCURACY, "fieldtype": "Percent"}
 
 	mape = sum(terms) / len(terms)
 	accuracy = max(0.0, min(100.0, (1.0 - mape) * 100.0))

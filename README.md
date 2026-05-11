@@ -6,7 +6,7 @@ Demand Forecasting & S&OP demo data + workspace for the Helix demo.
 
 - **3 DocTypes**: `Forecast Run`, `Demand Forecast`, `POS Daily Sales`
 - **Custom Fields**: `helix_generated` on Material Request and Purchase Receipt
-- **Seed script** (`helix_core.seed.seed_demo.run`) — wipes and rebuilds all demo data, idempotent on masters
+- **Seed script** (`helix_core.seed.seed_demo.run`) — wipes and rebuilds one year of demo sales + forecast data, idempotent on masters
 - **Workspace** "Helix S&OP" with 4 number cards, forecast-vs-actuals chart, MR shortcut
 - **Forecast Detail** Script Report
 - **Forecast vs Actuals** Dashboard Chart with category filter
@@ -16,7 +16,7 @@ Demand Forecasting & S&OP demo data + workspace for the Helix demo.
 ```bash
 bench --site demo.helix.localhost execute helix_core.helix_core.seed.seed_demo.run
 ```
-Target: <60s. Wipes transactional data, leaves masters intact.
+Wipes transactional data, leaves masters intact.
 
 ## Demo flow
 

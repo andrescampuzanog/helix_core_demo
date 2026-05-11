@@ -8,6 +8,7 @@ Deterministic via a fixed RNG seed so successive runs produce identical demos.
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from datetime import date, timedelta
@@ -35,9 +36,9 @@ from helix_core.helix_core.seed.data.items import (
 # ---------------------------------------------------------------------------
 
 RNG_SEED = 20260501
-HISTORICAL_DAYS = 90
+HISTORICAL_DAYS = 365
 FORECAST_HORIZON = 14
-HISTORICAL_RUNS = 14  # plus 1 active = 15 total
+HISTORICAL_RUNS = 365  # plus 1 active, so every historical sales day has a forecast run
 MODEL_VERSION = "helix-grocery-v1.2"
 ADMIN_USER = "admin@helix.mx"
 DEMO_USER = "demo@helix.mx"
@@ -50,7 +51,8 @@ PROMO_WINDOWS = [(60, 54), (10, 6)]
 PROMO_MULTIPLIER = 2.5
 
 ACTUAL_NOISE_SIGMA = 0.15
-FORECAST_NOISE_SIGMA = 0.08
+FORECAST_ERROR_MIN = 0.035
+FORECAST_ERROR_SPREAD = 0.020
 
 HELIX_CUSTOM_FIELDS = {
 	"Material Request": [
@@ -106,12 +108,12 @@ HELIX_CUSTOM_FIELDS = {
 def run():
 	"""Top-level: wipe + rebuild + commit."""
 	t0 = time.time()
-	rng = random.Random(RNG_SEED)
 	print("[helix-seed] starting…")
 
 	ensure_custom_fields()
+	ensure_dashboard_query_indexes()
 	frappe.db.commit()
-	print(f"[helix-seed] custom fields ready ({time.time() - t0:.1f}s)")
+	print(f"[helix-seed] custom fields and indexes ready ({time.time() - t0:.1f}s)")
 
 	wipe()
 	frappe.db.commit()
@@ -124,11 +126,11 @@ def run():
 	# Pre-compute the deterministic baseline lattice once so POS + forecasts share it.
 	baseline = _build_baseline_lattice()
 
-	seed_pos_daily_sales(baseline, rng)
+	seed_pos_daily_sales(baseline)
 	frappe.db.commit()
 	print(f"[helix-seed] POS rows done ({time.time() - t0:.1f}s)")
 
-	seed_forecast_runs_and_forecasts(baseline, rng)
+	seed_forecast_runs_and_forecasts(baseline)
 	frappe.db.commit()
 	print(f"[helix-seed] forecasts done ({time.time() - t0:.1f}s)")
 
@@ -149,9 +151,52 @@ def run():
 	_print_summary(t0)
 
 
+def after_migrate():
+	"""Migration hook: keep schema-related setup current without reseeding demo data."""
+	t0 = time.time()
+	print("[helix-seed] migration setup starting…")
+
+	ensure_custom_fields()
+	ensure_dashboard_query_indexes()
+	frappe.db.commit()
+	print(f"[helix-seed] custom fields and indexes ready ({time.time() - t0:.1f}s)")
+
+	_ensure_setup_complete()
+	frappe.db.commit()
+
+	ensure_forecasts_for_existing_sales()
+	frappe.db.commit()
+
+	print(f"[helix-seed] migration setup done ({time.time() - t0:.1f}s)")
+
+
 def ensure_custom_fields():
 	"""Create Helix custom columns before seed queries or inserts use them."""
 	create_custom_fields(HELIX_CUSTOM_FIELDS, ignore_validate=True, update=True)
+
+
+def ensure_dashboard_query_indexes():
+	"""Keep SOP chart queries responsive after the larger one-year seed."""
+	frappe.db.add_index("Demand Forecast", ["forecast_run", "forecast_date"], "helix_df_run_date")
+	frappe.db.add_index("Forecast Run", ["forecast_date"], "helix_fr_forecast_date")
+	frappe.db.add_index("POS Daily Sales", ["date", "item"], "helix_pos_date_item")
+
+
+def ensure_forecasts_for_existing_sales():
+	"""Create forecast rows if a migrated site has POS history but no forecasts.
+
+	This keeps migrate from wiping demo data while still repairing older demo states where
+	POS Daily Sales exists and Forecast Run / Demand Forecast was empty or incomplete.
+	"""
+	pos_count = frappe.db.count("POS Daily Sales")
+	forecast_count = frappe.db.count("Demand Forecast")
+	active_run_count = frappe.db.count("Forecast Run", {"status": "Active"})
+	if not pos_count or (forecast_count and active_run_count):
+		return
+
+	print("[helix-seed] POS history found without usable forecasts; generating forecasts…")
+	baseline = _build_baseline_lattice()
+	seed_forecast_runs_and_forecasts(baseline, skip_existing_forecast_rows=True)
 
 
 def _ensure_setup_complete():
@@ -251,8 +296,10 @@ def ensure_masters():
 
 
 def _ensure_fiscal_years():
-	"""Cover all dates the seed will produce: 90 days back, 14 days forward."""
-	for year in (2025, 2026, 2027):
+	"""Cover all dates the seed will produce."""
+	start_year = getdate(add_days(today(), -HISTORICAL_DAYS - 1)).year
+	end_year = getdate(add_days(today(), FORECAST_HORIZON)).year
+	for year in range(start_year, end_year + 1):
 		name = str(year)
 		if frappe.db.exists("Fiscal Year", name):
 			continue
@@ -433,7 +480,7 @@ def _ensure_items():
 
 
 def _build_baseline_lattice():
-	"""Compute deterministic per-(item,store,day) baseline demand for past 90 + future 14 days.
+	"""Compute deterministic per-(item,store,day) baseline demand for the full seed window.
 
 	Returns dict: { (item_code, warehouse_full, date_iso): base_qty }
 	"""
@@ -450,24 +497,82 @@ def _build_baseline_lattice():
 					d = add_days(t, delta)
 					weekday = getdate(d).weekday()  # 0=Mon
 					seasonality = _weekday_seasonality(category, weekday)
+					irregularity = _market_irregularity(category, item_code, full_wh, d, delta)
 					trend = 1.0 + (delta / 365.0) * 0.10  # gentle 10%/yr trend
 					promo = _promo_factor(item_code, delta)
-					qty = baseline * wh_factor * seasonality * trend * promo
+					qty = baseline * wh_factor * seasonality * irregularity * trend * promo
 					lattice[(item_code, full_wh, d)] = qty
 	return lattice
+
+
+def _stable_int(*parts) -> int:
+	"""Deterministic integer from text/date parts, independent of Python hash randomization."""
+	text = "|".join(str(part) for part in parts)
+	total = 0
+	for i, char in enumerate(text, start=1):
+		total += i * ord(char)
+	return total
+
+
+def _actual_qty(base: float, item_code: str, warehouse: str, sales_date) -> float:
+	"""Actual sales with deterministic noise so POS and forecast generation can agree."""
+	noise_rng = random.Random(_stable_int(RNG_SEED, "actual", item_code, warehouse, sales_date))
+	return max(0.0, base * (1.0 + noise_rng.gauss(0, ACTUAL_NOISE_SIGMA)))
+
+
+def _forecast_qty(actual_or_base: float, item_code: str, warehouse: str, forecast_date) -> float:
+	"""Forecast close to actuals, with MAPE intentionally around 4-5% for demo KPIs."""
+	seed = _stable_int(RNG_SEED, "forecast", item_code, warehouse, forecast_date)
+	sign = -1 if seed % 2 else 1
+	error = FORECAST_ERROR_MIN + ((seed // 7) % 1000) / 1000.0 * FORECAST_ERROR_SPREAD
+	return max(0.0, actual_or_base * (1.0 + sign * error))
 
 
 def _weekday_seasonality(category: str, weekday: int) -> float:
 	# 0=Mon ... 5=Sat 6=Sun
 	is_weekend = weekday in (5, 6)
 	if category in ("Bebidas", "Congelados", "Panadería"):
-		return 1.45 if is_weekend else (0.95 if weekday in (1, 2) else 1.0)
+		return 1.22 if is_weekend else (0.97 if weekday in (1, 2) else 1.0)
 	if category == "Frutas y Verduras":
-		return 1.20 if is_weekend else 0.95
+		return 1.12 if is_weekend else 0.97
 	if category == "Lácteos":
-		return 1.10 if is_weekend else 1.00
+		return 1.06 if is_weekend else 1.00
 	# Abarrotes — flatter
-	return 1.05 if is_weekend else 1.0
+	return 1.03 if is_weekend else 1.0
+
+
+def _market_irregularity(category: str, item_code: str, warehouse: str, sales_date, day_offset: int) -> float:
+	"""Shared non-weekly demand movement that survives aggregation across SKUs/stores."""
+	daily_rng = random.Random(_stable_int(RNG_SEED, "market-day", sales_date))
+	category_rng = random.Random(_stable_int(RNG_SEED, "category-day", category, sales_date))
+	store_rng = random.Random(_stable_int(RNG_SEED, "store-day", warehouse, sales_date))
+	item_rng = random.Random(_stable_int(RNG_SEED, "item-day", item_code, sales_date))
+
+	monthly_wave = 0.035 * math.sin((day_offset + 9) * 2 * math.pi / 29)
+	long_wave = 0.025 * math.sin((day_offset + 3) * 2 * math.pi / 43)
+	market_noise = daily_rng.gauss(0, 0.045)
+	category_noise = category_rng.gauss(0, 0.025)
+	store_noise = store_rng.gauss(0, 0.018)
+	item_noise = item_rng.gauss(0, 0.025)
+
+	event_lift = 0.0
+	event_roll = _stable_int(RNG_SEED, "event", sales_date) % 31
+	if event_roll in (0, 1):
+		event_lift = daily_rng.uniform(0.08, 0.18)
+	elif event_roll == 30:
+		event_lift = -daily_rng.uniform(0.05, 0.12)
+
+	return max(
+		0.65,
+		1.0
+		+ monthly_wave
+		+ long_wave
+		+ market_noise
+		+ category_noise
+		+ store_noise
+		+ item_noise
+		+ event_lift,
+	)
 
 
 def _promo_factor(item_code: str, day_offset_from_today: int) -> float:
@@ -487,8 +592,8 @@ def _promo_factor(item_code: str, day_offset_from_today: int) -> float:
 # ---------------------------------------------------------------------------
 
 
-def seed_pos_daily_sales(baseline: dict, rng: random.Random):
-	"""Insert ~36k POS Daily Sales rows directly via raw SQL multi-row INSERT."""
+def seed_pos_daily_sales(baseline: dict):
+	"""Insert one year of POS Daily Sales rows directly via raw SQL multi-row INSERT."""
 	now_str = now()
 	t = today()
 
@@ -496,7 +601,7 @@ def seed_pos_daily_sales(baseline: dict, rng: random.Random):
 	rates = {f"ITM-{CATEGORIES[cat]}-{c[0]}": c[3] for cat in CATEGORIES for c in ITEMS_BY_CATEGORY[cat]}
 
 	rows = []
-	for delta in range(-HISTORICAL_DAYS, 0):  # past 90 days, NOT including today
+	for delta in range(-HISTORICAL_DAYS, 0):  # full historical window, NOT including today
 		d = add_days(t, delta)
 		for category, abbr in CATEGORIES.items():
 			for code_suffix, *_ in ITEMS_BY_CATEGORY[category]:
@@ -504,7 +609,7 @@ def seed_pos_daily_sales(baseline: dict, rng: random.Random):
 				for wh in WAREHOUSES:
 					full_wh = f"{wh} - {COMPANY_ABBR}"
 					base = baseline[(item_code, full_wh, d)]
-					qty = max(0.0, base * (1.0 + rng.gauss(0, ACTUAL_NOISE_SIGMA)))
+					qty = _actual_qty(base, item_code, full_wh, d)
 					revenue = qty * rates[item_code]
 					rows.append(
 						(
@@ -549,10 +654,10 @@ def seed_pos_daily_sales(baseline: dict, rng: random.Random):
 # ---------------------------------------------------------------------------
 
 
-def seed_forecast_runs_and_forecasts(baseline: dict, rng: random.Random):
+def seed_forecast_runs_and_forecasts(baseline: dict, skip_existing_forecast_rows: bool = False):
 	now_str = now()
 	t = today()
-	# 14 historical runs (today-14 .. today-1), all Archived. 1 active = today.
+	# One historical run per POS day (today-365 .. today-1), all Archived. 1 active = today.
 	run_records = []
 	for delta in range(-HISTORICAL_RUNS, 1):
 		run_date = add_days(t, delta)
@@ -576,11 +681,25 @@ def seed_forecast_runs_and_forecasts(baseline: dict, rng: random.Random):
 		).insert(ignore_permissions=True)
 
 	# Bulk insert Demand Forecast rows.
+	existing_pairs = set()
+	if skip_existing_forecast_rows:
+		existing_pairs = set(
+			frappe.db.sql(
+				"""
+				SELECT forecast_run, forecast_date
+				  FROM `tabDemand Forecast`
+				 GROUP BY forecast_run, forecast_date
+				"""
+			)
+		)
+
 	rows = []
 	for run_id, run_date, _status in run_records:
 		# Each run forecasts run_date through run_date + (FORECAST_HORIZON-1).
 		for offset in range(FORECAST_HORIZON):
 			d = add_days(run_date, offset)
+			if skip_existing_forecast_rows and (run_id, getdate(d)) in existing_pairs:
+				continue
 			day_offset_from_today = (getdate(d) - getdate(t)).days
 			# Skip dates outside the lattice (shouldn't happen given our window).
 			if day_offset_from_today < -HISTORICAL_DAYS or day_offset_from_today > FORECAST_HORIZON:
@@ -591,7 +710,11 @@ def seed_forecast_runs_and_forecasts(baseline: dict, rng: random.Random):
 					for wh in WAREHOUSES:
 						full_wh = f"{wh} - {COMPANY_ABBR}"
 						base = baseline[(item_code, full_wh, d)]
-						forecast_qty = max(0.0, base * (1.0 + rng.gauss(0, FORECAST_NOISE_SIGMA)))
+						if day_offset_from_today < 0:
+							actual_or_base = _actual_qty(base, item_code, full_wh, d)
+						else:
+							actual_or_base = base
+						forecast_qty = _forecast_qty(actual_or_base, item_code, full_wh, d)
 						p10 = forecast_qty * 0.85
 						p90 = forecast_qty * 1.15
 						valid_through = add_days(run_date, FORECAST_HORIZON - 1)
@@ -645,7 +768,7 @@ def seed_forecast_runs_and_forecasts(baseline: dict, rng: random.Random):
 
 
 def seed_initial_stock(baseline: dict):
-	"""One Stock Reconciliation per warehouse, opening-stock, posted 91 days ago."""
+	"""One Stock Reconciliation per warehouse, opening-stock, posted before history begins."""
 	t = today()
 	posting_date = add_days(t, -HISTORICAL_DAYS - 1)
 	rates = {
@@ -666,7 +789,7 @@ def seed_initial_stock(baseline: dict):
 	for wh in WAREHOUSES:
 		full_wh = f"{wh} - {COMPANY_ABBR}"
 		# We compute target qty assuming the *active forecast's first day* is "today's daily rate".
-		# For seeding stock 91 days ago, we use the same target — Frappe doesn't replay POS to compute
+		# For seeding stock before history begins, we use the same target — Frappe doesn't replay POS to compute
 		# current stock; the SR sets a level and SLEs from POS deductions are per-transaction stocks.
 		# For demo purposes the Bin balance after seeding should land near (cover * baseline today).
 		items_rows = []
@@ -675,10 +798,16 @@ def seed_initial_stock(baseline: dict):
 				item_code = f"ITM-{abbr}-{code_suffix}"
 				rate_today = baseline[(item_code, full_wh, t)]
 				cover = days_of_cover(item_code)
-				# Add 90 days of consumption-equivalent so post-POS deductions land at the target.
-				# Total opening qty = cover_target_today + sum(actuals over 90 days) approx.
+				# Add historical consumption-equivalent so post-POS deductions land at the target.
+				# Total opening qty = cover_target_today + sum(actuals over the seed history) approx.
 				historical_consumption = sum(
-					baseline[(item_code, full_wh, add_days(t, d))] for d in range(-HISTORICAL_DAYS, 0)
+					_actual_qty(
+						baseline[(item_code, full_wh, add_days(t, d))],
+						item_code,
+						full_wh,
+						add_days(t, d),
+					)
+					for d in range(-HISTORICAL_DAYS, 0)
 				)
 				target_qty = cover * rate_today + historical_consumption
 				items_rows.append(

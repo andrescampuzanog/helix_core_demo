@@ -143,10 +143,15 @@ def get(
 	display_end = max(actual_end, forecast_end)
 
 	params = {"start": start, "actual_end": actual_end, "forecast_end": display_end}
-	group_filter = ""
+	forecast_item_filter = ""
+	actual_item_filter = ""
 	if item_group:
-		group_filter = "AND it.item_group = %(item_group)s"
-		params["item_group"] = item_group
+		item_names = frappe.get_all("Item", filters={"item_group": item_group}, pluck="name")
+		if not item_names:
+			item_names = ["__missing_item_group__"]
+		params["item_names"] = tuple(item_names)
+		forecast_item_filter = "AND df.item IN %(item_names)s"
+		actual_item_filter = "AND pos.item IN %(item_names)s"
 
 	forecast_rows = frappe.db.sql(
 		f"""
@@ -155,9 +160,8 @@ def get(
 		  FROM `tabDemand Forecast` df
 		  JOIN `tabForecast Run` fr ON fr.name = df.forecast_run
 		   AND fr.forecast_date = df.forecast_date
-		  JOIN `tabItem` it ON it.name = df.item
 		 WHERE df.forecast_date BETWEEN %(start)s AND %(actual_end)s
-		   {group_filter}
+		   {forecast_item_filter}
 		 GROUP BY df.forecast_date
 		 ORDER BY df.forecast_date
 		""",
@@ -165,31 +169,32 @@ def get(
 		as_dict=True,
 	)
 
-	future_forecast_rows = frappe.db.sql(
-		f"""
-		SELECT df.forecast_date AS d,
-		       SUM(df.forecast_qty) AS forecast
-		  FROM `tabDemand Forecast` df
-		  JOIN `tabForecast Run` fr ON fr.name = df.forecast_run
-		  JOIN `tabItem` it ON it.name = df.item
-		 WHERE fr.status = 'Active'
-		   AND df.forecast_date BETWEEN %(actual_end)s AND %(forecast_end)s
-		   {group_filter}
-		 GROUP BY df.forecast_date
-		 ORDER BY df.forecast_date
-		""",
-		params,
-		as_dict=True,
-	)
+	active_forecast_run = frappe.db.get_value("Forecast Run", {"status": "Active"}, "name")
+	future_forecast_rows = []
+	if active_forecast_run:
+		params["active_forecast_run"] = active_forecast_run
+		future_forecast_rows = frappe.db.sql(
+			f"""
+			SELECT df.forecast_date AS d,
+			       SUM(df.forecast_qty) AS forecast
+			  FROM `tabDemand Forecast` df
+			 WHERE df.forecast_run = %(active_forecast_run)s
+			   AND df.forecast_date BETWEEN %(actual_end)s AND %(forecast_end)s
+			   {forecast_item_filter}
+			 GROUP BY df.forecast_date
+			 ORDER BY df.forecast_date
+			""",
+			params,
+			as_dict=True,
+		)
 
 	actual_rows = frappe.db.sql(
 		f"""
 		SELECT pos.date AS d,
 		       SUM(pos.qty_sold) AS actual
 		  FROM `tabPOS Daily Sales` pos
-		  JOIN `tabItem` it ON it.name = pos.item
 		 WHERE pos.date BETWEEN %(start)s AND %(actual_end)s
-		   {group_filter}
+		   {actual_item_filter}
 		 GROUP BY pos.date
 		 ORDER BY pos.date
 		""",

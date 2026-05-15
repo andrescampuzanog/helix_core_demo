@@ -4,7 +4,6 @@ import frappe
 # all modules here - erpnext > modules.txt
 
 HIDDEN_MODULES = {
-	"Accounts",
 	"Projects",
 	"Setup",
 	"Manufacturing",

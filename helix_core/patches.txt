@@ -2,3 +2,4 @@
 
 [post_model_sync]
 helix_core.patches.add_dashboard_query_indexes
+helix_core.patches.add_forecast_vs_actuals_perf_indexes
